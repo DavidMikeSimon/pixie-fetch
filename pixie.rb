@@ -1,71 +1,82 @@
 #!/usr/bin/env ruby
 
-require 'fox16'
-require 'gphoto2'
+require 'subprocess'
 require 'pp'
 
-include Fox
+OUTPUT_DIR = "/home/dsimon/out"
 
-def find_files_recursive(folder)
-	folder.files + folder.folders.map{|f2| find_files_recursive(f2) }.flatten(1)
+def list_files(prefix)
+	files_str = Subprocess.check_output(["gphoto2", "--list-files"])
+	files = []
+	files_str.split("\n").each do |line|
+		# NOTE: Can't use gphoto index, it's unreliable
+		match = /#(\d+)\s+(\S+)\s+\S+\s+(\d+) KB/.match(line)
+		next unless match
+		next if match[2].start_with?(".thumb")
+		files.push({
+			filename: match[2],
+			size_kb: match[3].to_i,
+			composed_name: "#{prefix}.#{match[2]}"
+		})
+	end
+	return files
 end
 
-def fetch_camera_data
-	GPhoto2::Camera.first do |camera|
-		yield "Connected, scanning files..." if block_given?
-		files = find_files_recursive(camera.filesystem)
-		files.last.save("/home/dsimon/out/foo.jpg")
-		files.each do |file|
-			puts "#{file.info.size}: #{file.name}"
+def download_files(prefix)
+	unless File.exists?(OUTPUT_DIR)
+		File.mkdir(OUTPUT_DIR)
+	end
+
+	output_pattern = File.join(OUTPUT_DIR, "#{prefix}.%f.%C")
+	Subprocess.check_call([
+		"gphoto2",
+		"--force-overwrite",
+		"--get-all-files",
+		"--filename", output_pattern
+	])
+end
+
+def check_files_downloaded(files)
+	files.each do |file|
+		path = File.join(OUTPUT_DIR, file[:composed_name])
+		raise "Failed to download #{file[:filename]}" unless File.size?(path)
+		real_kb = File.stat(path).size/1024.0
+		diff = (file[:size_kb] - real_kb).abs
+		raise "Incomplete download #{file[:filename]}" unless diff < 2.0
+	end
+end
+
+def delete_files_on_camera
+	Subprocess.check_call([
+		"gphoto2",
+		"--delete-all-files",
+		"--recurse"
+	])
+end
+
+def pixie_fetch
+	prefix = Time.now.to_i
+
+	begin
+		files = list_files(prefix)
+		if files.length == 0
+			puts "Camera is empty, nothing to download."
+			return
 		end
-	end
-#rescue GPhoto2::Error => e
-	#yield "GPhoto2 Error: #{e.message}" if block_given?
-	#return []
-#rescue RuntimeError => e
-	#if e.message.include?("no devices detected")
-		#yield "No devices detected" if block_given?
-		#return []
-	#else
-		#raise e
-	#end
-end
-
-fetch_camera_data do |msg|
-	puts msg
-end
-
-exit
-
-app = FXApp.new
-
-main_win = FXMainWindow.new(
-	app,
-	"Pixie Fetch", 
-	width: 300,
-	height: 80,
-	opts: DECOR_BORDER + DECOR_TITLE,
-	padTop: 20,
-	padLeft: 10,
-	padRight: 10
-)
-
-status = FXLabel.new(main_win, " ")
-
-btn_matrix = FXMatrix.new(main_win, 2, opts: MATRIX_BY_COLUMNS, hSpacing: 20)
-
-download_btn = FXButton.new(btn_matrix, "Download", padLeft: 10, padRight: 10)
-download_btn.connect(SEL_COMMAND) do
-	fetch_camera_data do |msg|
-		status.text = msg
+		download_files(prefix)
+		check_files_downloaded(files)
+		puts
+		puts "Files downloaded and verified, cleaning camera..."
+		puts
+	rescue Subprocess::NonZeroExit, RuntimeError => e
+		puts "!!!! #{e.message}"
+		puts
+		puts "Download was not completed, leaving camera in original state."
+	else
+		delete_files_on_camera
+		puts
+		puts "Done."
 	end
 end
 
-close_btn = FXButton.new(btn_matrix, "Quit", padLeft: 10, padRight: 10)
-close_btn.connect(SEL_COMMAND) do
-	exit
-end
-
-main_win.show
-app.create
-app.run
+pixie_fetch
