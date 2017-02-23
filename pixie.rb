@@ -12,15 +12,23 @@ end
 
 def fetch_camera_data
 	GPhoto2::Camera.first do |camera|
-		yield "Connected, scanning files..."
+		yield "Connected, scanning files..." if block_given?
 		files = find_files_recursive(camera.filesystem)
+		files.last.save("/home/dsimon/out/foo.jpg")
+		files.each do |file|
+			puts "#{file.info.size}: #{file.name}"
+		end
 	end
-rescue RuntimeError => e
-	if e.message.include?("no devices detected")
-		yield "No devices detected"
-	else
-		raise e
-	end
+#rescue GPhoto2::Error => e
+	#yield "GPhoto2 Error: #{e.message}" if block_given?
+	#return []
+#rescue RuntimeError => e
+	#if e.message.include?("no devices detected")
+		#yield "No devices detected" if block_given?
+		#return []
+	#else
+		#raise e
+	#end
 end
 
 fetch_camera_data do |msg|
