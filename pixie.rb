@@ -60,10 +60,14 @@ end
 def remove_dups
 	dl_paths = Dir.glob(File.join($download_dir, "*"))
 	by_hash = {}
-	Subprocess.check_output(["md5sum"].concat(dl_paths)).split("\n").each do |line|
-		sum, path = line.split
+	md5cmd = "md5sum"
+	if (/darwin/ =~ RUBY_PLATFORM) != nil
+		md5cmd = "md5"
+	end
+	dl_paths.each do |dl_path|
+		sum = Subprocess.check_output([md5cmd, dl_path]).split.last
 		by_hash[sum] ||= []
-		by_hash[sum].push path
+		by_hash[sum].push dl_path
 	end
 	by_hash.each do |sum, paths|
 		paths.drop(1).each do |dup_path|
@@ -88,9 +92,10 @@ end
 def move_files_to_final
 	final_subdir_name = "Raws #{file_code_from_time(Time.now)}"
 	final_subdir_path = File.join($final_dir, final_subdir_name)
-	Dir.mkdir(final_subdir_path)
 
 	dl_paths = Dir.glob(File.join($download_dir, "*"))
+	return if dl_paths.empty?
+	Dir.mkdir(final_subdir_path)
 	dl_paths.each do |path|
 		stat = File.stat(path)
 		composed_name = "#{file_kind(path)} #{file_code_from_time(stat.mtime)} #{File.basename(path)}"
@@ -114,10 +119,12 @@ def pixie_fetch
 		return
 	else
 		puts
-		puts "Files downloaded and verified, cleaning camera..."
+		puts "Files verified, cleaning camera..."
 		puts
 		delete_files_on_camera
+		puts "Checking for duplicate files..."
 		remove_dups
+		puts "Moving files to Unsorted Raws..."
 		move_files_to_final
 		puts
 		puts "Done."
