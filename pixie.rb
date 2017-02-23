@@ -3,7 +3,14 @@
 require 'subprocess'
 require 'pp'
 
-OUTPUT_DIR = "/home/dsimon/out"
+$download_dir = ARGV[0] or raise "First argument must be download dir"
+$final_dir = ARGV[1] or raise "Second argument must be final dir"
+
+$download_dir = File.expand_path($download_dir)
+$final_dir = File.expand_path($final_dir)
+
+raise "No such download dir #{$download_dir}" unless Dir.exists?($download_dir)
+raise "No such final dir #{$final_dir}" unless Dir.exists?($final_dir)
 
 def list_files(prefix)
 	files_str = Subprocess.check_output(["gphoto2", "--list-files"])
@@ -23,11 +30,7 @@ def list_files(prefix)
 end
 
 def download_files(prefix)
-	unless File.exists?(OUTPUT_DIR)
-		File.mkdir(OUTPUT_DIR)
-	end
-
-	output_pattern = File.join(OUTPUT_DIR, "#{prefix}.%f.%C")
+	output_pattern = File.join($download_dir, "#{prefix}.%f.%C")
 	Subprocess.check_call([
 		"gphoto2",
 		"--force-overwrite",
@@ -38,7 +41,7 @@ end
 
 def check_files_downloaded(files)
 	files.each do |file|
-		path = File.join(OUTPUT_DIR, file[:composed_name])
+		path = File.join($download_dir, file[:composed_name])
 		raise "Failed to download #{file[:filename]}" unless File.size?(path)
 		real_kb = File.stat(path).size/1024.0
 		diff = (file[:size_kb] - real_kb).abs
@@ -54,26 +57,60 @@ def delete_files_on_camera
 	])
 end
 
+def remove_dups
+	dl_paths = Dir.glob(File.join($download_dir, "*"))
+	by_hash = {}
+	Subprocess.check_output(["md5sum"].concat(dl_paths)).split("\n").each do |line|
+		sum, path = line.split
+		by_hash[sum] ||= []
+		by_hash[sum].push path
+	end
+	by_hash.each do |sum, paths|
+		paths.drop(1).each do |dup_path|
+			puts "Deleting duplicate #{dup_path}"
+			File.unlink(dup_path)
+		end
+	end
+end
+
+def file_code_from_time(time)
+	time.strftime('%F %r').gsub(':','.')
+end
+
+def move_files_to_final
+	final_subdir_name = "Raws #{file_code_from_time(Time.now)}"
+	final_subdir_path = File.join($final_dir, final_subdir_name)
+	Dir.mkdir(final_subdir_path)
+
+	dl_paths = Dir.glob(File.join($download_dir, "*"))
+	dl_paths.each do |path|
+		stat = File.stat(path)
+		composed_name = "Shot #{file_code_from_time(stat.mtime)} #{File.basename(path)}"
+		Subprocess.check_call(["mv", path, File.join(final_subdir_path, composed_name)])
+	end
+end
+
 def pixie_fetch
 	prefix = Time.now.to_i
 
 	begin
 		files = list_files(prefix)
-		if files.length == 0
-			puts "Camera is empty, nothing to download."
-			return
-		end
+		puts "Camera is empty, nothing to download." if files.length == 0
 		download_files(prefix)
 		check_files_downloaded(files)
-		puts
-		puts "Files downloaded and verified, cleaning camera..."
-		puts
 	rescue Subprocess::NonZeroExit, RuntimeError => e
+		puts
 		puts "!!!! #{e.message}"
 		puts
 		puts "Download was not completed, leaving camera in original state."
+		return
 	else
+		puts
+		puts "Files downloaded and verified, cleaning camera..."
+		puts
 		delete_files_on_camera
+		remove_dups
+		move_files_to_final
 		puts
 		puts "Done."
 	end
