@@ -77,6 +77,14 @@ def file_code_from_time(time)
 	time.strftime('%F %r').gsub(':','.')
 end
 
+def file_kind(path)
+	case File.extname(path)
+		when ".jpg", ".jpeg", ".raw", ".nef" then "Image"
+		when ".mpg", ".mpeg", ".mov" then "Video"
+		else "File"
+	end
+end
+
 def move_files_to_final
 	final_subdir_name = "Raws #{file_code_from_time(Time.now)}"
 	final_subdir_path = File.join($final_dir, final_subdir_name)
@@ -85,7 +93,7 @@ def move_files_to_final
 	dl_paths = Dir.glob(File.join($download_dir, "*"))
 	dl_paths.each do |path|
 		stat = File.stat(path)
-		composed_name = "Shot #{file_code_from_time(stat.mtime)} #{File.basename(path)}"
+		composed_name = "#{file_kind(path)} #{file_code_from_time(stat.mtime)} #{File.basename(path)}"
 		Subprocess.check_call(["mv", path, File.join(final_subdir_path, composed_name)])
 	end
 end
