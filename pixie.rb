@@ -82,7 +82,7 @@ def file_code_from_time(time)
 end
 
 def file_kind(path)
-	case File.extname(path)
+	case File.extname(path).downcase
 		when ".jpg", ".jpeg", ".raw", ".nef" then "Image"
 		when ".mpg", ".mpeg", ".mov" then "Video"
 		else "File"
